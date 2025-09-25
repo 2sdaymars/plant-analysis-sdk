@@ -1,0 +1,154 @@
+name: Build Plant Analysis SDK Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
+      with:
+        platforms: arm64
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-user-static
+        
+    - name: Download base Raspberry Pi OS
+      run: |
+        wget https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-07-04/2024-07-04-raspios-bookworm-arm64-lite.img.xz
+        xz -d 2024-07-04-raspios-bookworm-arm64-lite.img.xz
+        
+    - name: Setup loop device and mount
+      run: |
+        # 이미지 크기 확장
+        dd if=/dev/zero bs=1M count=2048 >> 2024-07-04-raspios-bookworm-arm64-lite.img
+        
+        # 루프 디바이스 설정
+        sudo losetup -P /dev/loop0 2024-07-04-raspios-bookworm-arm64-lite.img
+        
+        # 파티션 확장
+        sudo parted /dev/loop0 resizepart 2 100%
+        sudo e2fsck -f /dev/loop0p2
+        sudo resize2fs /dev/loop0p2
+        
+        # 마운트
+        sudo mkdir -p /mnt/{boot,root}
+        sudo mount /dev/loop0p1 /mnt/boot
+        sudo mount /dev/loop0p2 /mnt/root
+        
+    - name: Install Plant Analysis SDK
+      run: |
+        # chroot 환경에서 패키지 설치
+        sudo cp /usr/bin/qemu-aarch64-static /mnt/root/usr/bin/
+        
+        # 설치 스크립트 복사
+        sudo cp one_click_install.sh /mnt/root/home/pi/
+        sudo cp plant_monitoring_system.py /mnt/root/home/pi/
+        sudo cp automated_monitoring.py /mnt/root/home/pi/
+        
+        # chroot 환경에서 설치 실행
+        sudo chroot /mnt/root /bin/bash -c "
+          export DEBIAN_FRONTEND=noninteractive
+          apt update && apt upgrade -y
+          apt install -y python3 python3-pip python3-venv python3-dev build-essential cmake git
+          apt install -y libcamera-apps libcamera-dev python3-picamera2
+          apt install -y libopencv-dev python3-opencv libatlas-base-dev libjpeg-dev
+          
+          # Python 환경 설정
+          cd /home/pi
+          python3 -m venv plant_analysis_env
+          source plant_analysis_env/bin/activate
+          pip install numpy scipy matplotlib pandas opencv-python plantcv scikit-learn jupyter schedule
+          
+          # 모니터링 시스템 설정
+          mkdir -p /home/pi/plant_monitoring
+          cp /home/pi/plant_monitoring_system.py /home/pi/plant_monitoring/
+          cp /home/pi/automated_monitoring.py /home/pi/plant_monitoring/
+          
+          # 권한 설정
+          chown -R pi:pi /home/pi/plant_analysis_env
+          chown -R pi:pi /home/pi/plant_monitoring
+          
+          # 카메라 활성화
+          echo 'camera_auto_detect=1' >> /boot/config.txt
+          
+          # SSH 활성화
+          touch /boot/ssh
+          
+          # 시작 스크립트 생성
+          cat > /home/pi/plant_monitoring/start_plant_sdk.sh << 'EOF'
+#!/bin/bash
+echo '🌱 식물 분석 SDK v1.0'
+echo '====================='
+source /home/pi/plant_analysis_env/bin/activate
+cd /home/pi/plant_monitoring
+echo '✅ 환경 준비 완료!'
+echo 'python3 plant_monitoring_system.py'
+EOF
+          chmod +x /home/pi/plant_monitoring/start_plant_sdk.sh
+          
+          # 부팅시 안내 메시지
+          echo 'echo \"🌱 식물 분석 SDK 준비 완료!\"' >> /home/pi/.bashrc
+          echo 'echo \"시작: cd /home/pi/plant_monitoring && ./start_plant_sdk.sh\"' >> /home/pi/.bashrc
+          
+          # 정리
+          apt autoremove -y
+          apt autoclean
+          rm -rf /var/log/* /tmp/*
+        "
+        
+    - name: Cleanup and create final image
+      run: |
+        # 언마운트
+        sudo umount /mnt/boot
+        sudo umount /mnt/root
+        sudo losetup -d /dev/loop0
+        
+        # 최종 이미지명
+        mv 2024-07-04-raspios-bookworm-arm64-lite.img PlantAnalysis-SDK-v1.0.img
+        
+    - name: Compress and create checksum
+      run: |
+        gzip PlantAnalysis-SDK-v1.0.img
+        sha256sum PlantAnalysis-SDK-v1.0.img.gz > PlantAnalysis-SDK-v1.0.img.gz.sha256
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: plant-analysis-sdk
+        path: |
+          PlantAnalysis-SDK-v1.0.img.gz
+          PlantAnalysis-SDK-v1.0.img.gz.sha256
+          
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Plant Analysis SDK ${{ github.ref }}
+        draft: false
+        prerelease: false
+        
+    - name: Upload Release Assets
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: PlantAnalysis-SDK-v1.0.img.gz
+        asset_name: PlantAnalysis-SDK-v1.0.img.gz
+        asset_content_type: application/gzip

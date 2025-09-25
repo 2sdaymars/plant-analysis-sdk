@@ -1,0 +1,178 @@
+name: Build Plant Analysis SDK Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Create release package
+      run: |
+        # 릴리즈 디렉토리 생성
+        mkdir -p plant-analysis-sdk-release
+        
+        # 핵심 파일들 복사
+        cp plant_monitoring_system.py plant-analysis-sdk-release/
+        cp automated_monitoring.py plant-analysis-sdk-release/
+        cp one_click_install.sh plant-analysis-sdk-release/
+        cp updated_setup.sh plant-analysis-sdk-release/
+        cp README.md plant-analysis-sdk-release/
+        
+        # 설치 가이드 생성
+        cat > plant-analysis-sdk-release/INSTALLATION.md << 'EOF'
+        # 🌱 Plant Analysis SDK 설치 가이드
+        
+        ## 🚀 빠른 설치 (라즈베리파이)
+        
+        ```bash
+        # 1. 저장소 다운로드
+        git clone https://github.com/2sdaymars/plant-analysis-sdk.git
+        cd plant-analysis-sdk
+        
+        # 2. 원클릭 설치 실행
+        chmod +x one_click_install.sh
+        ./one_click_install.sh
+        
+        # 3. 시스템 시작
+        cd plant_monitoring
+        python3 plant_monitoring_system.py
+        ```
+        
+        ## 📋 시스템 요구사항
+        - Raspberry Pi 4 (권장)
+        - Raspberry Pi OS (Bookworm)
+        - Python 3.9+
+        - 8GB+ SD 카드
+        - Pi Camera Module
+        
+        ## 🔧 수동 설치
+        자세한 내용은 README.md를 참조하세요.
+        EOF
+        
+        # Docker 설정 파일 생성
+        cat > plant-analysis-sdk-release/Dockerfile << 'EOF'
+        FROM python:3.9-slim
+        
+        WORKDIR /app
+        
+        # 시스템 패키지 설치
+        RUN apt-get update && apt-get install -y \
+            libopencv-dev \
+            python3-opencv \
+            libatlas-base-dev \
+            libjpeg-dev \
+            build-essential \
+            cmake \
+            git \
+            && rm -rf /var/lib/apt/lists/*
+        
+        # Python 패키지 설치
+        RUN pip install numpy scipy matplotlib pandas opencv-python plantcv scikit-learn jupyter schedule
+        
+        # 소스 코드 복사
+        COPY plant_monitoring_system.py .
+        COPY automated_monitoring.py .
+        
+        # 작업 디렉토리 생성
+        RUN mkdir -p /app/plant_monitoring
+        
+        EXPOSE 8888
+        
+        CMD ["python3", "plant_monitoring_system.py"]
+        EOF
+        
+        # Docker Compose 파일 생성
+        cat > plant-analysis-sdk-release/docker-compose.yml << 'EOF'
+        version: '3.8'
+        services:
+          plant-analysis:
+            build: .
+            ports:
+              - "8888:8888"
+            volumes:
+              - ./data:/app/data
+              - ./logs:/app/logs
+            environment:
+              - PYTHONPATH=/app
+            restart: unless-stopped
+        EOF
+        
+        # 압축 파일 생성
+        tar -czf plant-analysis-sdk-release.tar.gz plant-analysis-sdk-release/
+        
+        # 체크섬 생성
+        sha256sum plant-analysis-sdk-release.tar.gz > plant-analysis-sdk-release.tar.gz.sha256
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: plant-analysis-sdk-release
+        path: |
+          plant-analysis-sdk-release.tar.gz
+          plant-analysis-sdk-release.tar.gz.sha256
+          
+    - name: Create Release
+      id: create_release
+      if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name || 'v1.0.0' }}
+        release_name: Plant Analysis SDK ${{ github.ref_name || 'v1.0.0' }}
+        body: |
+          🌱 Plant Analysis SDK Release
+          
+          ## 📦 포함된 내용
+          - 식물 모니터링 시스템
+          - 자동화 도구
+          - 원클릭 설치 스크립트
+          - Docker 설정 파일
+          - 완전한 설치 가이드
+          
+          ## 🚀 빠른 시작
+          1. `plant-analysis-sdk-release.tar.gz` 다운로드
+          2. 라즈베리파이에 압축 해제
+          3. `./one_click_install.sh` 실행
+          
+          ## 📋 시스템 요구사항
+          - Raspberry Pi 4 (권장)
+          - Raspberry Pi OS Bookworm
+          - Python 3.9+
+        draft: false
+        prerelease: false
+        
+    - name: Upload Release Asset
+      if: steps.create_release.outputs.upload_url
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: plant-analysis-sdk-release.tar.gz
+        asset_name: plant-analysis-sdk-release.tar.gz
+        asset_content_type: application/gzip
+        
+    - name: Upload Checksum
+      if: steps.create_release.outputs.upload_url
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: plant-analysis-sdk-release.tar.gz.sha256
+        asset_name: plant-analysis-sdk-release.tar.gz.sha256
+        asset_content_type: text/plain
