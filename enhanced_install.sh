@@ -156,15 +156,10 @@ pip install plantcv || log_warning "PlantCV 설치 실패 (선택사항이므로
 log_info "프로젝트 디렉토리 설정 중..."
 mkdir -p $HOME/plant_monitoring/{data,logs,config,models}
 
-# 설정 파일 복사 (현재 디렉토리에 있다면)
-if [ -f "plant_monitoring_system.py" ]; then
-    cp plant_monitoring_system.py $HOME/plant_monitoring/
-    log_success "plant_monitoring_system.py 복사 완료"
-fi
-
-if [ -f "automated_monitoring.py" ]; then
-    cp automated_monitoring.py $HOME/plant_monitoring/
-    log_success "automated_monitoring.py 복사 완료"
+# 실시간 웹 인터페이스 복사
+if [ -f "web_interface_realtime.py" ]; then
+    cp web_interface_realtime.py $HOME/plant_monitoring/web_interface.py
+    log_success "실시간 웹 인터페이스 복사 완료"
 fi
 
 # 시작 스크립트 생성
