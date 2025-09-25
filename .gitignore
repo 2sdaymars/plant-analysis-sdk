@@ -1,0 +1,63 @@
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 로그 파일
+*.log
+logs/
+*.log.*
+
+# 환경 설정
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
+
+# 임시 파일들 (내부 문서)
+DESKTOP_COMMANDER_*.md
+FINAL_UPLOAD_*.md
+GITHUB_CLEANUP_*.md
+MISSING_GITHUB_*.md
+UPLOAD_GUIDE.md
+auto_upload*.sh
+desktop_commander_*.sh
