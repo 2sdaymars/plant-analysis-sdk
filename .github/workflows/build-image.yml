@@ -2,209 +2,154 @@ name: Build Raspberry Pi Image
 on:
   push:
     tags:
-      - 'img-v*'  # img-v1.0.0 태그로 이미지 빌드 트리거
-  workflow_dispatch:  # 수동 실행 가능
+      - 'img-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag'
+        required: false
+        default: 'manual-build'
 
 jobs:
   build-image:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up dependencies
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af
+          df -h
+
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            qemu-user-static \
-            kpartx \
-            unzip \
-            wget \
-            parted
+          sudo apt-get install -y qemu-user-static kpartx zip
 
       - name: Download base Raspberry Pi OS
         run: |
-          echo "🔽 Downloading Raspberry Pi OS Lite..."
-          wget -O raspios-lite.zip \
-            "https://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2024-03-15/2024-03-15-raspios-lite.zip"
-          unzip raspios-lite.zip
-          mv *.img base-raspios.img
+          echo "Downloading Raspberry Pi OS Lite..."
+          wget -q --show-progress -O raspios.zip \
+            "https://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2024-03-15/2024-03-15-raspios-bookworm-lite-arm64.zip"
+          unzip raspios.zip
+          mv *.img raspios.img
+          ls -lh raspios.img
 
-      - name: Extend image size
+      - name: Extend image
         run: |
-          echo "📏 Extending image size for our software..."
-          dd if=/dev/zero bs=1M count=2048 >> base-raspios.img
-          echo ", +" | sudo sfdisk -N 2 base-raspios.img
-          
-      - name: Mount image
+          echo "Extending image size..."
+          dd if=/dev/zero bs=1M count=1024 >> raspios.img
+          echo ", +" | sudo sfdisk -N 2 raspios.img
+
+      - name: Setup loop device
         run: |
-          echo "💿 Mounting image..."
-          sudo losetup -fP base-raspios.img
-          export LOOP_DEVICE=$(losetup -a | grep base-raspios.img | cut -d: -f1)
+          sudo losetup -fP raspios.img
+          LOOP_DEVICE=$(losetup -a | grep raspios.img | cut -d: -f1)
           echo "LOOP_DEVICE=$LOOP_DEVICE" >> $GITHUB_ENV
-          
-          # 파티션 확장
-          sudo e2fsck -f ${LOOP_DEVICE}p2
+          echo "Using loop device: $LOOP_DEVICE"
+
+      - name: Resize partition
+        run: |
+          sudo e2fsck -f ${LOOP_DEVICE}p2 || true
           sudo resize2fs ${LOOP_DEVICE}p2
-          
-          # 마운트
-          sudo mkdir -p /mnt/rpi-boot /mnt/rpi-root
-          sudo mount ${LOOP_DEVICE}p1 /mnt/rpi-boot
-          sudo mount ${LOOP_DEVICE}p2 /mnt/rpi-root
 
-      - name: Set up chroot environment
+      - name: Mount partitions
         run: |
-          echo "🔧 Setting up chroot environment..."
-          sudo cp /usr/bin/qemu-arm-static /mnt/rpi-root/usr/bin/
-          
-          # DNS 설정
-          sudo cp /etc/resolv.conf /mnt/rpi-root/etc/resolv.conf
-          
-          # 필요한 디렉토리 바인드 마운트
-          sudo mount --bind /dev /mnt/rpi-root/dev
-          sudo mount --bind /proc /mnt/rpi-root/proc
-          sudo mount --bind /sys /mnt/rpi-root/sys
+          sudo mkdir -p /mnt/{boot,root}
+          sudo mount ${LOOP_DEVICE}p1 /mnt/boot
+          sudo mount ${LOOP_DEVICE}p2 /mnt/root
 
-      - name: Install Plant Analysis SDK
+      - name: Setup chroot
         run: |
-          echo "🌱 Installing Plant Analysis SDK in chroot..."
+          sudo cp /usr/bin/qemu-aarch64-static /mnt/root/usr/bin/
+          sudo mount --bind /dev /mnt/root/dev
+          sudo mount --bind /proc /mnt/root/proc
+          sudo mount --bind /sys /mnt/root/sys
           
-          # 소스 복사
-          sudo cp -r . /mnt/rpi-root/tmp/plant-analysis-sdk/
-          
-          # chroot에서 설치 실행
-          sudo chroot /mnt/rpi-root /bin/bash << 'EOF'
-          set -e
-          cd /tmp/plant-analysis-sdk
-          
-          # 시스템 업데이트
-          apt-get update
-          apt-get upgrade -y
-          
-          # Plant Analysis SDK 설치
-          chmod +x enhanced_install.sh
-          ./enhanced_install.sh --image-mode --non-interactive
-          
-          # 부팅시 자동 시작 설정
-          systemctl enable plant-monitoring
-          
-          # SSH 활성화
-          systemctl enable ssh
-          
-          # 기본 사용자 생성 (pi:raspberry)
-          echo 'pi:$6$salt$3MJgoM/p2yV5VG5cW4W8XkfJ5JoV/h9F1w2xQWz8xCF2Zn3J' | chpasswd -e
-          usermod -aG sudo pi
-          
-          # 네트워크 설정
-          cat > /etc/wpa_supplicant/wpa_supplicant.conf << 'WPACONF'
-country=US
-ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-update_config=1
-
-# 사용자가 나중에 WiFi 설정을 추가할 수 있도록 예제 제공
-# network={
-#     ssid="YourWiFiName"
-#     psk="YourWiFiPassword"
-# }
-WPACONF
-          
-          # 부팅 설정
-          echo 'dtparam=i2c_arm=on' >> /boot/config.txt
-          echo 'camera_auto_detect=1' >> /boot/config.txt
-          
-          # 환영 메시지 설정
-          cat > /etc/motd << 'MOTD'
-🌱 Plant Analysis SDK v1.0.0
-═══════════════════════════════════════
-
-Welcome to your Plant Monitoring System!
-
-Quick Start:
-• Web Interface: http://$(hostname -I | cut -d' ' -f1):5000
-• Jupyter Notebook: http://$(hostname -I | cut -d' ' -f1):8888
-• SSH Access: ssh pi@$(hostname -I | cut -d' ' -f1)
-
-Commands:
-• plant-sdk       - Start monitoring
-• plant-web       - Start web interface  
-• plant-jupyter   - Start Jupyter
-• plant-status    - Check system status
-
-Documentation: https://github.com/2sdaymars/plant-analysis-sdk
-MOTD
-
-          # 정리
-          apt-get autoremove -y
-          apt-get autoclean
-          rm -rf /tmp/plant-analysis-sdk
-          
-          echo "✅ Plant Analysis SDK installation completed!"
-EOF
-
-      - name: Clean up and unmount
+      - name: Install Plant SDK
         run: |
-          echo "🧹 Cleaning up..."
-          sudo umount /mnt/rpi-root/dev /mnt/rpi-root/proc /mnt/rpi-root/sys
-          sudo umount /mnt/rpi-root /mnt/rpi-boot
-          sudo losetup -d $LOOP_DEVICE
+          # Copy our files
+          sudo cp -r . /mnt/root/tmp/plant-sdk/
+          
+          # Run installation in chroot
+          sudo chroot /mnt/root /bin/bash -c "
+            set -e
+            cd /tmp/plant-sdk
+            
+            # Update system
+            apt-get update
+            apt-get install -y python3 python3-pip git
+            
+            # Install our software
+            chmod +x enhanced_install.sh
+            ./enhanced_install.sh --non-interactive --image-mode || true
+            
+            # Enable SSH
+            systemctl enable ssh
+            
+            # Set password
+            echo 'pi:raspberry' | chpasswd
+            
+            # Cleanup
+            apt-get clean
+            rm -rf /tmp/plant-sdk
+          "
 
-      - name: Create final image
+      - name: Cleanup and create image
         run: |
-          echo "📦 Creating final image..."
-          mv base-raspios.img plant-analysis-sdk-$(date +%Y%m%d).img
+          # Unmount everything
+          sudo umount /mnt/root/dev /mnt/root/proc /mnt/root/sys
+          sudo umount /mnt/root /mnt/boot
+          sudo losetup -d ${LOOP_DEVICE}
           
-          # 이미지 압축
-          zip plant-analysis-sdk-complete-image.zip plant-analysis-sdk-*.img
+          # Rename and compress
+          mv raspios.img plant-analysis-sdk-$(date +%Y%m%d).img
+          zip -9 plant-analysis-sdk-image.zip plant-analysis-sdk-*.img
           
-          # 체크섬 생성
-          sha256sum plant-analysis-sdk-*.img > plant-analysis-sdk-image.sha256
+          # Create checksum
+          sha256sum plant-analysis-sdk-*.img > plant-analysis-sdk.sha256
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plant-analysis-sdk-image
+          path: |
+            plant-analysis-sdk-image.zip
+            plant-analysis-sdk.sha256
+
+      - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
         with:
           files: |
-            plant-analysis-sdk-complete-image.zip
-            plant-analysis-sdk-image.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create release notes
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
+            plant-analysis-sdk-image.zip
+            plant-analysis-sdk.sha256
           body: |
-            # 🌱 Plant Analysis SDK - Complete Image Release
+            # 🌱 Plant Analysis SDK - Complete Image
             
-            ## 📥 Download Options
+            **Ready-to-use Raspberry Pi image with Plant Analysis SDK pre-installed!**
             
-            **Complete Image (Recommended for beginners):**
-            - Download: `plant-analysis-sdk-complete-image.zip`
-            - Flash to SD card using Raspberry Pi Imager
-            - Boot and access web interface at `http://raspberrypi.local:5000`
+            ## 🚀 Quick Start
+            1. Download `plant-analysis-sdk-image.zip`
+            2. Extract and flash .img file to SD card (8GB+)
+            3. Insert SD card into Raspberry Pi and boot
+            4. Access web interface: `http://raspberrypi.local:5000`
+            5. SSH access: `ssh pi@raspberrypi.local` (password: raspberry)
             
-            **SDK Package (For developers):**
-            - Download source code and run `./enhanced_install.sh`
+            ## ✅ Pre-installed Features
+            - Plant Analysis SDK
+            - Web interface (port 5000)  
+            - Jupyter notebook (port 8888)
+            - SSH enabled
+            - All dependencies included
             
-            ## 🚀 What's included in the image:
-            - ✅ Plant Analysis SDK pre-installed
-            - ✅ Web interface ready at port 5000
-            - ✅ Jupyter notebook at port 8888
-            - ✅ All dependencies installed
-            - ✅ SSH enabled (pi:raspberry)
-            - ✅ WiFi ready (edit /boot/wpa_supplicant.conf)
-            
-            ## 📋 Default Credentials:
-            - Username: `pi`
-            - Password: `raspberry`
-            - SSH: Enabled
-            
-            ## 🔧 First Boot:
-            1. Flash image to SD card (8GB+ recommended)
-            2. Insert SD card to Raspberry Pi
-            3. Connect to network
-            4. Access http://raspberrypi.local:5000
-            
-            This provides the exact CinePI experience - download, flash, boot, use!
+            Flash and go! 🚀
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

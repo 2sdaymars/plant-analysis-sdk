@@ -3,8 +3,44 @@
 # 🌱 Plant Analysis SDK 개선된 설치 스크립트
 # 라즈베리파이용 완전 자동 설치
 
+# 기본 설정
+IMAGE_MODE=false
+NON_INTERACTIVE=false
+
+# 명령행 인자 파싱
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --image-mode)
+            IMAGE_MODE=true
+            shift
+            ;;
+        --non-interactive)
+            NON_INTERACTIVE=true
+            shift
+            ;;
+        -h|--help)
+            echo "사용법: $0 [옵션]"
+            echo "옵션:"
+            echo "  --image-mode       이미지 빌드 모드 (chroot 환경)"
+            echo "  --non-interactive  대화형 입력 없이 자동 설치"
+            echo "  -h, --help        도움말 표시"
+            exit 0
+            ;;
+        *)
+            echo "알 수 없는 옵션: $1"
+            exit 1
+            ;;
+    esac
+done
+
 echo "🌱 Plant Analysis SDK 설치를 시작합니다..."
 echo "=========================================="
+if [ "$IMAGE_MODE" = true ]; then
+    echo "📦 이미지 빌드 모드로 실행 중..."
+fi
+if [ "$NON_INTERACTIVE" = true ]; then
+    echo "🤖 비대화형 모드로 실행 중..."
+fi
 
 # 에러 발생시 스크립트 중단
 set -e
@@ -60,7 +96,7 @@ sudo apt install -y python3 python3-pip python3-venv python3-dev \
                    htop nano vim
 
 # 라즈베리파이 관련 패키지 (라즈베리파이에서만)
-if command -v raspi-config &> /dev/null; then
+if command -v raspi-config &> /dev/null && [ "$IMAGE_MODE" = false ]; then
     log_info "라즈베리파이 전용 패키지 설치 중..."
     sudo apt install -y libcamera-apps libcamera-dev python3-picamera2 \
                        raspi-config rpi-update
@@ -76,6 +112,14 @@ if command -v raspi-config &> /dev/null; then
     # SPI 활성화
     log_info "SPI 활성화 중..."
     sudo raspi-config nonint do_spi 0
+elif [ "$IMAGE_MODE" = true ]; then
+    log_info "이미지 모드: 라즈베리파이 설정을 config.txt에 추가..."
+    # 이미지 빌드시에는 /boot/config.txt에 직접 설정 추가
+    if [ -f "/boot/config.txt" ]; then
+        echo "camera_auto_detect=1" >> /boot/config.txt
+        echo "dtparam=i2c_arm=on" >> /boot/config.txt
+        echo "dtparam=spi=on" >> /boot/config.txt
+    fi
 fi
 
 # Python 가상환경 생성
@@ -316,7 +360,9 @@ WantedBy=multi-user.target
 EOF
 
 # 설치 완료 정보 표시
-clear
+if [ "$NON_INTERACTIVE" = false ]; then
+    clear
+fi
 log_success "🎉 Plant Analysis SDK 설치 완료!"
 echo "=========================================="
 echo ""
@@ -324,21 +370,27 @@ echo "📂 설치 위치:"
 echo "  • 가상환경: $HOME/plant_analysis_env"
 echo "  • 프로젝트: $HOME/plant_monitoring"
 echo ""
-echo "🚀 시작 방법:"
-echo "  • 빠른 시작: plant-sdk"
-echo "  • 웹 인터페이스: plant-web"
-echo "  • Jupyter 노트북: plant-jupyter"
-echo "  • 수동 실행: cd ~/plant_monitoring && ./start_plant_sdk.sh"
-echo ""
-echo "🔧 시스템 서비스 (선택사항):"
-echo "  sudo cp ~/plant_monitoring/plant-sdk.service /etc/systemd/system/"
-echo "  sudo systemctl enable plant-sdk.service"
-echo "  sudo systemctl start plant-sdk.service"
-echo ""
-echo "📱 웹 인터페이스: http://$(hostname -I | awk '{print $1}'):5000"
-echo "📊 Jupyter 노트북: http://$(hostname -I | awk '{print $1}'):8888"
-echo ""
-echo "✅ 지금 바로 'plant-sdk' 명령어를 실행해보세요!"
+
+if [ "$IMAGE_MODE" = false ]; then
+    echo "🚀 시작 방법:"
+    echo "  • 빠른 시작: plant-sdk"
+    echo "  • 웹 인터페이스: plant-web"
+    echo "  • Jupyter 노트북: plant-jupyter"
+    echo "  • 수동 실행: cd ~/plant_monitoring && ./start_plant_sdk.sh"
+    echo ""
+    echo "🔧 시스템 서비스 (선택사항):"
+    echo "  sudo cp ~/plant_monitoring/plant-sdk.service /etc/systemd/system/"
+    echo "  sudo systemctl enable plant-sdk.service"
+    echo "  sudo systemctl start plant-sdk.service"
+    echo ""
+    echo "📱 웹 인터페이스: http://$(hostname -I | awk '{print $1}'):5000"
+    echo "📊 Jupyter 노트북: http://$(hostname -I | awk '{print $1}'):8888"
+    echo ""
+    echo "✅ 지금 바로 'plant-sdk' 명령어를 실행해보세요!"
+else
+    echo "🌱 이미지 모드에서 설치 완료!"
+    echo "부팅 후 자동으로 서비스가 시작됩니다."
+fi
 echo ""
 
 # 설치 로그 저장
