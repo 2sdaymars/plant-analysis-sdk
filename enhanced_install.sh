@@ -156,10 +156,23 @@ pip install plantcv || log_warning "PlantCV 설치 실패 (선택사항이므로
 log_info "프로젝트 디렉토리 설정 중..."
 mkdir -p $HOME/plant_monitoring/{data,logs,config,models}
 
-# 실시간 웹 인터페이스 복사
-if [ -f "web_interface_realtime.py" ]; then
-    cp web_interface_realtime.py $HOME/plant_monitoring/web_interface.py
+# 설정 파일 복사 (현재 디렉토리에 있다면)
+if [ -f "plant_monitoring_system.py" ]; then
+    cp plant_monitoring_system.py $HOME/plant_monitoring/
+    log_success "plant_monitoring_system.py 복사 완료"
+fi
+
+if [ -f "automated_monitoring.py" ]; then
+    cp automated_monitoring.py $HOME/plant_monitoring/
+    log_success "automated_monitoring.py 복사 완료"
+fi
+
+# 실시간 웹 인터페이스 복사 (강제 덮어쓰기)
+if [ -f "web_interface.py" ]; then
+    cp web_interface.py $HOME/plant_monitoring/web_interface.py
     log_success "실시간 웹 인터페이스 복사 완료"
+else
+    log_warning "web_interface.py 파일을 찾을 수 없습니다"
 fi
 
 # 시작 스크립트 생성
@@ -205,108 +218,26 @@ EOF
 
 chmod +x $HOME/plant_monitoring/start_plant_sdk.sh
 
-# 웹 인터페이스 생성 (간단한 Flask 앱)
-log_info "웹 인터페이스 생성 중..."
-cat > $HOME/plant_monitoring/web_interface.py << 'EOF'
-#!/usr/bin/env python3
-"""
-🌱 Plant Analysis SDK Web Interface
-간단한 웹 인터페이스로 모니터링 시스템 제어
-"""
-
-from flask import Flask, render_template_string, jsonify
-import os
-import json
-from datetime import datetime
-
-app = Flask(__name__)
-
-# HTML 템플릿
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>🌱 Plant Analysis SDK</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #2d5a27; text-align: center; }
-        .status { padding: 15px; margin: 20px 0; border-radius: 5px; }
-        .status.online { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
-        .status.offline { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
-        .button { background: #28a745; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; margin: 10px 5px; }
-        .button:hover { background: #218838; }
-        .info { background: #e9ecef; padding: 15px; border-radius: 5px; margin: 20px 0; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🌱 Plant Analysis SDK</h1>
-        
-        <div class="status online">
-            <h3>✅ 시스템 상태: 온라인</h3>
-            <p>마지막 업데이트: {{ timestamp }}</p>
-        </div>
-        
-        <div class="info">
-            <h3>📊 시스템 정보</h3>
-            <p><strong>Python 버전:</strong> {{ python_version }}</p>
-            <p><strong>작업 디렉토리:</strong> {{ working_dir }}</p>
-            <p><strong>가상환경:</strong> {{ venv_active }}</p>
-        </div>
-        
-        <div class="info">
-            <h3>🚀 빠른 시작</h3>
-            <p>터미널에서 다음 명령어를 사용하세요:</p>
-            <ul>
-                <li><code>cd ~/plant_monitoring && ./start_plant_sdk.sh</code> - SDK 환경 시작</li>
-                <li><code>python3 plant_monitoring_system.py</code> - 메인 시스템 실행</li>
-                <li><code>jupyter notebook</code> - 노트북 환경 실행</li>
-            </ul>
-        </div>
-        
-        <div class="info">
-            <h3>📂 프로젝트 구조</h3>
-            <ul>
-                <li><strong>data/</strong> - 수집된 식물 데이터</li>
-                <li><strong>logs/</strong> - 시스템 로그 파일</li>
-                <li><strong>config/</strong> - 설정 파일</li>
-                <li><strong>models/</strong> - 학습된 AI 모델</li>
-            </ul>
-        </div>
-    </div>
-</body>
-</html>
-"""
-
-@app.route('/')
-def home():
-    import sys
-    return render_template_string(HTML_TEMPLATE,
-        timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        python_version=sys.version,
-        working_dir=os.getcwd(),
-        venv_active="활성화됨" if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix) else "비활성화됨"
-    )
-
-@app.route('/api/status')
-def status():
-    return jsonify({
-        'status': 'online',
-        'timestamp': datetime.now().isoformat(),
-        'directories': {
-            'data': os.path.exists('data'),
-            'logs': os.path.exists('logs'),
-            'config': os.path.exists('config'),
-            'models': os.path.exists('models')
-        }
-    })
-
-if __name__ == '__main__':
-    print("🌱 Plant Analysis SDK 웹 인터페이스 시작")
-    print("📱 브라우저에서 http://localhost:5000 접속")
-    app.run(host='0.0.0.0', port=5000, debug=False)
-EOF
+# 실시간 웹 인터페이스 복사
+log_info "실시간 웹 인터페이스 설정 중..."
+if [ -f "web_interface.py" ]; then
+    # 이미 실시간 버전이 있는 경우
+    cp web_interface.py $HOME/plant_monitoring/
+    log_success "실시간 웹 인터페이스 복사 완료"
+elif [ -f "web_interface_realtime.py" ]; then
+    # 실시간 전용 파일이 있는 경우
+    cp web_interface_realtime.py $HOME/plant_monitoring/web_interface.py
+    log_success "실시간 웹 인터페이스 복사 완료"
+else
+    # GitHub에서 직접 다운로드
+    log_info "GitHub에서 실시간 웹 인터페이스 다운로드 중..."
+    wget -q https://raw.githubusercontent.com/2sdaymars/plant-analysis-sdk/main/web_interface_realtime.py -O $HOME/plant_monitoring/web_interface.py
+    if [ $? -eq 0 ]; then
+        log_success "실시간 웹 인터페이스 다운로드 완료"
+    else
+        log_error "실시간 웹 인터페이스 다운로드 실패"
+    fi
+fi
 
 # 권한 설정
 log_info "권한 설정 중..."
